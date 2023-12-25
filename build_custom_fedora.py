@@ -128,6 +128,7 @@ def main():
         isolinux_dir = os.path.join(working_dir, "isolinux")
         if not os.path.exists(isolinux_dir):
             os.makedirs(isolinux_dir)
+            subprocess.run()
 
         shutil.copy2(args.kickstart, isolinux_dir)
 
