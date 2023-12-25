@@ -147,10 +147,3 @@ cleanup
 log "Script execution completed."
 
 %end
-
-%addon com_redhat_kdump --enable --reserve-mb='auto'
-
-%anaconda
-pwpolicy root --minlen=6 --minquality=1 --notstrict --nochanges --notempty
-pwpolicy user --minlen=6 --minquality=1 --notstrict --nochanges --emptyok
-%end
