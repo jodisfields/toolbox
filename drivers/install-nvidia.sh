@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# This script installs the latest firmware and NVIDIA drivers on a Fedora machine.
+# This script installs the latest firmware awnd NVIDIA drivers on a Fedora machine.
 
 echo "Enabling RPM Fusion repositories for NVIDIA drivers..."
 sudo dnf install https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm
@@ -11,7 +11,7 @@ sudo dnf update -y
 
 echo "Installing the latest NVIDIA drivers..."
 sudo dnf install -y akmod-nvidia
-sudo dnf install -y xorg-x11-drv-nvidia-cuda # Optional, for CUDA support
+sudo dnf install -y xorg-x11-drv-nvidia-cuda
 
 echo "Installing DKMS to automatically rebuild NVIDIA kernel modules..."
 sudo dnf install -y dkms
