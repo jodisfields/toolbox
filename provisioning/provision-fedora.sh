@@ -11,7 +11,7 @@ releasever=$(rpm -E %fedora)
 basearch=$(uname -m)
 
 log() {
-    echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*" >> "$LOG_FILE"
+    echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*" >>"$LOG_FILE"
 }
 
 handle_error() {
@@ -30,7 +30,7 @@ run_cmd() {
 }
 
 require_tool() {
-    if ! command -v $1 &> /dev/null; then
+    if ! command -v $1 &>/dev/null; then
         handle_error "Required tool $1 is not installed."
     fi
 }
@@ -55,7 +55,7 @@ disable_firewall() {
 }
 
 add_repositories() {
-    log "Adding Repositories..." 
+    log "Adding Repositories..."
     run_cmd sudo dnf config-manager --add-repo=https://pkg.surfacelinux.com/fedora/linux-surface.repo
     run_cmd sudo rpm --import https://downloads.1password.com/linux/keys/1password.asc
     run_cmd sudo sh -c 'echo -e "[1password]\nname=1Password Stable Channel\nbaseurl=https://downloads.1password.com/linux/rpm/stable/\$basearch\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=\"https://downloads.1password.com/linux/keys/1password.asc\"" > /etc/yum.repos.d/1password.repo'
@@ -77,16 +77,16 @@ install_packages() {
         gnome-shell-extension-pop-shell-shortcut-overrides gnome-tweaks graphviz grub2-common grub2-efi-x64 alacritty grub2-tools \
         libvirt-daemon neovim openssh-server openssl pykickstart python3 qemu-common qemu-img redhat-rpm-config squashfs-tools \
         virt-install virt-manager-common wpa_supplicant xclip xorriso ngrep unzip util-linux-user dnf-plugins-core procps 1password \
-        iproute wireshark-cli pciutils net-tools tcpdump bridge-utils iputils koan libuser 
+        iproute wireshark-cli pciutils net-tools tcpdump bridge-utils iputils koan libuser
 }
 
 install_nvs() {
     mkdir -p $NVS_HOME
     run_cmd git clone https://github.com/jasongin/nvs "$NVS_HOME"
     run_cmd bash "$NVS_HOME/nvs.sh" install
-    run_cmd nvs add latest
-    run_cmd nvs add lts
-    run_cmd nvs link lts
+    run_cmd "$NVS_HOME/nvs.sh" add latest
+    run_cmd "$NVS_HOME/nvs.sh" add lts
+    run_cmd "$NVS_HOME/nvs.sh" link lts
 }
 
 install_miniconda() {
@@ -103,7 +103,6 @@ install_miniconda() {
 
 setup_zsh() {
     log "Setting up ZSH..."
-    #mkdir -p "$ZSH_CUSTOM"
     run_cmd sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
     run_cmd git clone https://github.com/zsh-users/zsh-autosuggestions "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
     run_cmd git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
@@ -142,7 +141,7 @@ main() {
     disable_firewall
     add_repositories
     install_packages
-    #install_nvs
+    install_nvs
     install_miniconda
     setup_zsh
     install_containerlab
