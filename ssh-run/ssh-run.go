@@ -1,31 +1,29 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
-	"github.com/scrapli/scrapligo/driver/options"
-	"github.com/scrapli/scrapligo/platform"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 var (
-	port          = flag.Int("port", 22, "SSH port number")
-	keyPath       = flag.String("keypath", os.Getenv("HOME")+"/.ssh/id_rsa", "Path to the SSH private key")
-	concurrency   = flag.Int("concurrency", 10, "Number of concurrent command executions")
-	outputPath    = flag.String("output", "", "Path to the output file")
-	platformName  = flag.String("platform", "linux", "Platform name (e.g., linux, juniper, cisco_iosxe, arista_eos)")
-	transport     = flag.String("transport", "system", "Transport type (system, standard, or paramiko)")
-	enableCommand = flag.String("enable", "", "Enable command for privileged mode (e.g., 'enable' for Cisco devices)")
+	port    = flag.Int("port", 22, "SSH port number")
+	keyPath = flag.String("keypath", os.Getenv("HOME")+"/.ssh/id_rsa", "Path to the SSH private key")
 )
 
 func main() {
-	log.SetFlags(0)
-	flag.Parse()
+	log.SetFlags(0) // Set logging to have no prefixed date/time
+	flag.Parse()    // Parse known flags
 
+	// Determine the position of the '-cmd' argument
 	var cmdIndex int
 	var userHost string
 	rawCmd := ""
@@ -34,7 +32,7 @@ func main() {
 			cmdIndex = i + 1
 			break
 		}
-		if i == 1 {
+		if i == 1 { // Assuming the first argument is user@host
 			userHost = arg
 		}
 	}
@@ -60,49 +58,48 @@ func main() {
 }
 
 func run(userHost string, commands []string) error {
+	if err := validatePort(*port); err != nil {
+		return fmt.Errorf("port validation error: %v", err)
+	}
+
 	user, host, err := parseUserHost(userHost)
 	if err != nil {
 		return fmt.Errorf("invalid target format: %v", err)
 	}
 
-	p, err := platform.NewPlatform(
-		*platformName,
-		host,
-		options.WithAuthNoStrictKey(),
-		options.WithAuthUsername(user),
-		options.WithAuthPrivateKeyFile(*keyPath),
-		options.WithPort(*port),
-		options.WithTransportType(*transport),
-	)
+	signer, err := getSigner(*keyPath)
 	if err != nil {
-		return fmt.Errorf("failed to create platform: %v", err)
+		return fmt.Errorf("failed to get SSH signer: %v", err)
 	}
 
-	d, err := p.GetNetworkDriver()
+	hostKeyCallback, err := createHostKeyCallback()
 	if err != nil {
-		return fmt.Errorf("failed to create network driver: %v", err)
+		return fmt.Errorf("failed to set up host key verification: %v", err)
 	}
 
-	if *enableCommand != "" {
-		d.OnOpen(d.AcquirePriv(*enableCommand))
+	config := &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: hostKeyCallback,
+		Timeout:         10 * time.Second,
 	}
 
-	if err = d.Open(); err != nil {
-		return fmt.Errorf("failed to open connection: %v", err)
+	address := fmt.Sprintf("%s:%d", host, *port)
+	connection, err := ssh.Dial("tcp", address, config)
+	if err != nil {
+		return fmt.Errorf("failed to dial: %v", err)
 	}
-	defer d.Close()
+	defer connection.Close()
 
-	var outputFile *os.File
-	if *outputPath != "" {
-		outputFile, err = os.Create(*outputPath)
-		if err != nil {
-			return fmt.Errorf("failed to create output file: %v", err)
-		}
-		defer outputFile.Close()
+	executeCommands(commands, connection)
+
+	return nil
+}
+
+func validatePort(port int) error {
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("port number %d is out of the valid range (1-65535)", port)
 	}
-
-	executeCommands(commands, d, outputFile)
-
 	return nil
 }
 
@@ -112,6 +109,28 @@ func parseUserHost(target string) (user, host string, err error) {
 		return "", "", fmt.Errorf("expected format user@host")
 	}
 	return parts[0], parts[1], nil
+}
+
+func getSigner(keyPath string) (ssh.Signer, error) {
+	key, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read private key: %v", err)
+	}
+
+	signer, err := ssh.ParsePrivateKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse private key: %v", err)
+	}
+	return signer, nil
+}
+
+func createHostKeyCallback() (ssh.HostKeyCallback, error) {
+	knownHostsPath := os.Getenv("HOME") + "/.ssh/known_hosts"
+	callback, err := knownhosts.New(knownHostsPath)
+	if err != nil {
+		return nil, fmt.Errorf("error setting up known hosts: %v", err)
+	}
+	return callback, nil
 }
 
 func parseCommands(cmd string) []string {
@@ -134,30 +153,35 @@ func parseCommands(cmd string) []string {
 	return commands
 }
 
-func executeCommands(commands []string, d *platform.Driver, outputFile *os.File) {
+func executeCommands(commands []string, connection *ssh.Client) {
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, *concurrency)
-
 	for _, cmd := range commands {
-		sem <- struct{}{}
 		wg.Add(1)
 		go func(command string) {
-			defer func() {
-				<-sem
-				wg.Done()
-			}()
-
-			response, err := d.SendCommand(command)
+			defer wg.Done()
+			output, err := runCommand(command, connection)
 			if err != nil {
 				log.Printf("Error executing %s: %v\n", command, err)
 			} else {
-				output := fmt.Sprintf("Output of %s: %s\n", command, response.Result)
-				log.Print(output)
-				if outputFile != nil {
-					outputFile.WriteString(output)
-				}
+				log.Printf("Output of %s: %s\n", command, output)
 			}
 		}(cmd)
 	}
 	wg.Wait()
+}
+
+func runCommand(cmd string, connection *ssh.Client) (string, error) {
+	session, err := connection.NewSession()
+	if err != nil {
+		return "", fmt.Errorf("failed to create session: %v", err)
+	}
+	defer session.Close()
+
+	var outputBuffer bytes.Buffer
+	session.Stdout = &outputBuffer
+	if err := session.Run(cmd); err != nil {
+		return "", fmt.Errorf("failed to run command: %v", err)
+	}
+
+	return outputBuffer.String(), nil
 }
